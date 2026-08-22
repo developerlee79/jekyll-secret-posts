@@ -14,6 +14,10 @@ module Jekyll
         raw = Digest::SHA256.hexdigest(@config.salt + identifier)
         raw[0, @config.token_length]
       end
+
+      def url_for(collection_label, relative_path)
+        "#{@config.url_prefix}#{token_for(collection_label, relative_path)}/"
+      end
     end
   end
 end

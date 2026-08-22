@@ -1,5 +1,8 @@
 # frozen_string_literal: true
 
+require "jekyll/secret_posts/config"
+require "jekyll/secret_posts/url_tokenizer"
+
 module Jekyll
   module SecretPosts
     class Generator < Jekyll::Generator
@@ -58,7 +61,6 @@ module Jekyll
           Jekyll.logger.info "Secret posts: no collection '#{config.collection_name}'"
           return
         end
-        ensure_collection_read(collection)
         docs = collection.docs
         if docs.empty?
           Jekyll.logger.info "Secret posts: no documents"
@@ -70,7 +72,7 @@ module Jekyll
       def log_secret_doc_urls(docs, config, site)
         tokenizer = UrlTokenizer.new(config)
         baseurl = normalized_baseurl(site.config["baseurl"])
-        docs.each { |doc| log_one_secret_url(doc, config, tokenizer, baseurl) }
+        docs.each { |doc| log_one_secret_url(doc, tokenizer, baseurl) }
       end
 
       def normalized_baseurl(baseurl_value)
@@ -78,18 +80,10 @@ module Jekyll
         baseurl.empty? ? nil : baseurl
       end
 
-      def log_one_secret_url(doc, config, tokenizer, baseurl)
-        token = tokenizer.token_for(doc.collection.label, doc.relative_path)
-        path = "#{config.url_prefix}#{token}/"
+      def log_one_secret_url(doc, tokenizer, baseurl)
+        path = tokenizer.url_for(doc.collection.label, doc.relative_path)
         full_url = baseurl ? "#{baseurl.sub(%r{/\z}, '')}#{path}" : path
         Jekyll.logger.info "Secret post URL: #{full_url}"
-      end
-
-      def ensure_collection_read(collection)
-        return unless collection.docs.empty? && collection.respond_to?(:read)
-
-        coll_dir = collection.respond_to?(:directory) ? collection.directory.to_s : ""
-        collection.read if !coll_dir.empty? && File.directory?(coll_dir)
       end
     end
   end

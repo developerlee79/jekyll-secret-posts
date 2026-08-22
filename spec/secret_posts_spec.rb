@@ -195,6 +195,19 @@ RSpec.describe Jekyll::SecretPosts::UrlTokenizer do
     expect(token).to match(/\A[0-9a-f]+\z/)
     expect(tokenizer.token_for(nil, "foo.md")).to eq(token)
   end
+
+  describe "#url_for" do
+    it "wraps the token in the configured url_prefix with a trailing slash" do
+      expect(tokenizer.url_for("secret", "foo.md")).to eq("/s/#{tokenizer.token_for('secret', 'foo.md')}/")
+    end
+
+    it "uses a custom url_prefix" do
+      custom = described_class.new(
+        Jekyll::SecretPosts::Config.new("secret_posts" => { "url_prefix" => "/p" })
+      )
+      expect(custom.url_for("secret", "foo.md")).to match(%r{\A/p/[0-9a-f]{32}/\z})
+    end
+  end
 end
 
 RSpec.describe Jekyll::SecretPosts::Generator do
@@ -264,9 +277,7 @@ RSpec.describe Jekyll::SecretPosts::Generator do
         collection: OpenStruct.new(label: "secret"),
         relative_path: "my-post.md"
       )
-      collection = double("Collection", docs: [doc], read: nil)
-      allow(collection).to receive(:respond_to?).with(:read).and_return(true)
-      allow(collection).to receive(:respond_to?).with(:directory).and_return(false)
+      collection = double("Collection", docs: [doc])
       site_with_collection = double(
         "Site",
         config: {
@@ -430,6 +441,43 @@ RSpec.describe "Secret posts integration" do
       expect(content).to include("0;url=/")
       expect(content).to include("Redirecting...")
       expect(content).to include("Go to homepage")
+    end
+  end
+
+  it "logs a URL matching the actual generated token directory when list_urls is enabled" do
+    Dir.mktmpdir do |tmp|
+      source = tmp
+      dest = File.join(tmp, "_site")
+      FileUtils.mkdir_p(File.join(source, "_secret"))
+      File.write(
+        File.join(source, "_secret", "test-post.md"),
+        "---\ntitle: Secret\n---\nBody\n"
+      )
+      File.write(
+        File.join(source, "_config.yml"),
+        "plugins:\n  - jekyll-secret-posts\nsecret_posts:\n  index_layout: null\n  list_urls: true\n"
+      )
+      config = Jekyll.configuration(
+        "source" => source,
+        "destination" => dest,
+        "plugins" => ["jekyll-secret-posts"]
+      )
+
+      logged = []
+      real_logger = Jekyll.logger
+      allow(real_logger).to receive(:info) { |*args| logged << args.join(" ") }
+
+      site = Jekyll::Site.new(config)
+      site.process
+
+      secret_urls = logged.grep(/Secret post URL:/)
+      expect(secret_urls.size).to eq(1)
+
+      logged_token = secret_urls.first[%r{/s/([0-9a-f]{32})/}, 1]
+      expect(logged_token).not_to be_nil
+
+      written_tokens = Dir.children(File.join(dest, "s")).reject { |c| c == "index.html" }
+      expect(written_tokens).to eq([logged_token])
     end
   end
 end

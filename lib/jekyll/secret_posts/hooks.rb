@@ -34,25 +34,23 @@ module Jekyll
       end
 
       def self.apply_secret_permalink(doc)
-        return unless secret_document?(doc)
+        config = secret_config_for(doc)
+        return unless config
 
-        config = Config.new(doc.site.config)
-        tokenizer = UrlTokenizer.new(config)
-        token = tokenizer.token_for(doc.collection.label, doc.relative_path)
-        doc.data["permalink"] = "#{config.url_prefix}#{token}/"
+        doc.data["permalink"] = UrlTokenizer.new(config).url_for(doc.collection.label, doc.relative_path)
         doc.data["sitemap"] = false
       end
 
-      def self.secret_document?(doc)
-        doc.collection && doc.site &&
-          doc.collection.label == Config.new(doc.site.config).collection_name
+      # Returns the Config when doc belongs to the secret collection, otherwise nil.
+      def self.secret_config_for(doc)
+        return nil unless doc.collection && doc.site
+
+        config = Config.new(doc.site.config)
+        config.collection_name == doc.collection.label ? config : nil
       end
 
       def self.inject_noindex(doc)
-        return unless doc.collection && doc.site
-
-        config = Config.new(doc.site.config)
-        return unless doc.collection.label == config.collection_name
+        return unless secret_config_for(doc)
         return unless doc.output
 
         new_output = if doc.output.include?("<head>")
