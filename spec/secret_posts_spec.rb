@@ -280,6 +280,25 @@ RSpec.describe Jekyll::SecretPosts::Generator do
     expect(index_page.content).to include("Go to homepage")
   end
 
+  it "HTML-escapes the redirect url in the generated index page" do
+    escaping_site = double(
+      "Site",
+      config: {
+        "secret_posts" => { "url_prefix" => "/s/", "redirect_url" => '/a?x=1&y=2"z' }
+      },
+      collections: {},
+      pages: pages
+    )
+    allow(escaping_site).to receive(:source).and_return("/tmp/source")
+    allow(escaping_site).to receive(:in_theme_dir).and_return("/tmp/source")
+
+    described_class.new.generate(escaping_site)
+
+    content = pages.first.content
+    expect(content).to include("&amp;y=2&quot;z")
+    expect(content).not_to include('&y=2"z')
+  end
+
   context "when secret_posts.list_urls is true" do
     let(:site) do
       double(

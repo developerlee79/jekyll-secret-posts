@@ -1,5 +1,6 @@
 # frozen_string_literal: true
 
+require "cgi"
 require "jekyll/secret_posts/config"
 require "jekyll/secret_posts/url_tokenizer"
 
@@ -27,7 +28,7 @@ module Jekyll
       end
 
       def assign_redirect_content(page, config)
-        url = config.redirect_url
+        url = CGI.escapeHTML(config.redirect_url)
         if config.secret_index_layout
           page.data["layout"] = config.secret_index_layout
           page.content = redirect_fragment(url)
