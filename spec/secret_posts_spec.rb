@@ -144,6 +144,64 @@ RSpec.describe Jekyll::SecretPosts::Config do
       cfg = described_class.new("secret_posts" => { "list_urls" => "" })
       expect(cfg.list_urls?).to eq(false)
     end
+
+    it "returns false when secret_posts.list_urls is whitespace only" do
+      cfg = described_class.new("secret_posts" => { "list_urls" => "  " })
+      expect(cfg.list_urls?).to eq(false)
+    end
+
+    it "returns true when secret_posts.list_urls is a non-blank string" do
+      cfg = described_class.new("secret_posts" => { "list_urls" => "yes" })
+      expect(cfg.list_urls?).to eq(true)
+    end
+  end
+
+  context "trailing slash normalization" do
+    it "appends a slash to url_prefix that lacks one" do
+      cfg = described_class.new("secret_posts" => { "url_prefix" => "/hidden" })
+      expect(cfg.url_prefix).to eq("/hidden/")
+    end
+
+    it "leaves an already-slashed url_prefix untouched" do
+      cfg = described_class.new("secret_posts" => { "url_prefix" => "/hidden/" })
+      expect(cfg.url_prefix).to eq("/hidden/")
+    end
+
+    it "leaves an already-slashed redirect_url untouched" do
+      cfg = described_class.new("secret_posts" => { "redirect_url" => "/elsewhere/" })
+      expect(cfg.redirect_url).to eq("/elsewhere/")
+    end
+
+    it "leaves an already-slashed baseurl untouched" do
+      expect(described_class.new("baseurl" => "/blog/").redirect_url).to eq("/blog/")
+    end
+
+    it "keeps a redirect_url query string intact" do
+      cfg = described_class.new("secret_posts" => { "redirect_url" => "/landing?src=x&lang=ko" })
+      expect(cfg.redirect_url).to eq("/landing?src=x&lang=ko")
+    end
+
+    it "keeps a redirect_url fragment intact" do
+      cfg = described_class.new("secret_posts" => { "redirect_url" => "https://example.com/page#frag" })
+      expect(cfg.redirect_url).to eq("https://example.com/page#frag")
+    end
+
+    it "still appends a slash to a plain absolute redirect_url" do
+      cfg = described_class.new("secret_posts" => { "redirect_url" => "https://example.com/page" })
+      expect(cfg.redirect_url).to eq("https://example.com/page/")
+    end
+
+    it "keeps a baseurl query string intact" do
+      expect(described_class.new("baseurl" => "/blog?v=1").redirect_url).to eq("/blog?v=1")
+    end
+
+    it "normalizes a non-string url_prefix instead of raising" do
+      expect(described_class.new("secret_posts" => { "url_prefix" => 5 }).url_prefix).to eq("5/")
+    end
+  end
+
+  it "no longer exposes token_length" do
+    expect(described_class.new({})).not_to respond_to(:token_length)
   end
 end
 
@@ -195,6 +253,19 @@ RSpec.describe Jekyll::SecretPosts::UrlTokenizer do
     expect(token).to match(/\A[0-9a-f]+\z/)
     expect(tokenizer.token_for(nil, "foo.md")).to eq(token)
   end
+
+  describe "#url_for" do
+    it "wraps the token in the configured url_prefix with a trailing slash" do
+      expect(tokenizer.url_for("secret", "foo.md")).to eq("/s/#{tokenizer.token_for('secret', 'foo.md')}/")
+    end
+
+    it "uses a custom url_prefix" do
+      custom = described_class.new(
+        Jekyll::SecretPosts::Config.new("secret_posts" => { "url_prefix" => "/p" })
+      )
+      expect(custom.url_for("secret", "foo.md")).to match(%r{\A/p/[0-9a-f]{32}/\z})
+    end
+  end
 end
 
 RSpec.describe Jekyll::SecretPosts::Generator do
@@ -232,6 +303,25 @@ RSpec.describe Jekyll::SecretPosts::Generator do
     expect(index_page.content).to include("Go to homepage")
   end
 
+  it "HTML-escapes the redirect url in the generated index page" do
+    escaping_site = double(
+      "Site",
+      config: {
+        "secret_posts" => { "url_prefix" => "/s/", "redirect_url" => '/a?x=1&y=2"z' }
+      },
+      collections: {},
+      pages: pages
+    )
+    allow(escaping_site).to receive(:source).and_return("/tmp/source")
+    allow(escaping_site).to receive(:in_theme_dir).and_return("/tmp/source")
+
+    described_class.new.generate(escaping_site)
+
+    content = pages.first.content
+    expect(content).to include("&amp;y=2&quot;z")
+    expect(content).not_to include('&y=2"z')
+  end
+
   context "when secret_posts.list_urls is true" do
     let(:site) do
       double(
@@ -264,9 +354,7 @@ RSpec.describe Jekyll::SecretPosts::Generator do
         collection: OpenStruct.new(label: "secret"),
         relative_path: "my-post.md"
       )
-      collection = double("Collection", docs: [doc], read: nil)
-      allow(collection).to receive(:respond_to?).with(:read).and_return(true)
-      allow(collection).to receive(:respond_to?).with(:directory).and_return(false)
+      collection = double("Collection", docs: [doc])
       site_with_collection = double(
         "Site",
         config: {
@@ -430,6 +518,43 @@ RSpec.describe "Secret posts integration" do
       expect(content).to include("0;url=/")
       expect(content).to include("Redirecting...")
       expect(content).to include("Go to homepage")
+    end
+  end
+
+  it "logs a URL matching the actual generated token directory when list_urls is enabled" do
+    Dir.mktmpdir do |tmp|
+      source = tmp
+      dest = File.join(tmp, "_site")
+      FileUtils.mkdir_p(File.join(source, "_secret"))
+      File.write(
+        File.join(source, "_secret", "test-post.md"),
+        "---\ntitle: Secret\n---\nBody\n"
+      )
+      File.write(
+        File.join(source, "_config.yml"),
+        "plugins:\n  - jekyll-secret-posts\nsecret_posts:\n  index_layout: null\n  list_urls: true\n"
+      )
+      config = Jekyll.configuration(
+        "source" => source,
+        "destination" => dest,
+        "plugins" => ["jekyll-secret-posts"]
+      )
+
+      logged = []
+      real_logger = Jekyll.logger
+      allow(real_logger).to receive(:info) { |*args| logged << args.join(" ") }
+
+      site = Jekyll::Site.new(config)
+      site.process
+
+      secret_urls = logged.grep(/Secret post URL:/)
+      expect(secret_urls.size).to eq(1)
+
+      logged_token = secret_urls.first[%r{/s/([0-9a-f]{32})/}, 1]
+      expect(logged_token).not_to be_nil
+
+      written_tokens = Dir.children(File.join(dest, "s")).reject { |c| c == "index.html" }
+      expect(written_tokens).to eq([logged_token])
     end
   end
 end

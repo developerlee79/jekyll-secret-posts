@@ -3,8 +3,8 @@
 Gem::Specification.new do |spec|
   spec.name          = "jekyll-secret-posts"
   spec.version       = "0.1.0"
-  spec.authors       = ["Author"]
-  spec.email         = [""]
+  spec.authors       = ["devl79"]
+  spec.email         = ["dltjgus0709@gmail.com"]
 
   spec.summary       = "Jekyll plugin for unlisted posts served at hashed, share-only URLs."
   spec.homepage      = "https://github.com/developerlee79/jekyll-secret-posts"
