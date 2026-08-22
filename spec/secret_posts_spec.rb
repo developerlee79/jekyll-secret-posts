@@ -175,6 +175,29 @@ RSpec.describe Jekyll::SecretPosts::Config do
     it "leaves an already-slashed baseurl untouched" do
       expect(described_class.new("baseurl" => "/blog/").redirect_url).to eq("/blog/")
     end
+
+    it "keeps a redirect_url query string intact" do
+      cfg = described_class.new("secret_posts" => { "redirect_url" => "/landing?src=x&lang=ko" })
+      expect(cfg.redirect_url).to eq("/landing?src=x&lang=ko")
+    end
+
+    it "keeps a redirect_url fragment intact" do
+      cfg = described_class.new("secret_posts" => { "redirect_url" => "https://example.com/page#frag" })
+      expect(cfg.redirect_url).to eq("https://example.com/page#frag")
+    end
+
+    it "still appends a slash to a plain absolute redirect_url" do
+      cfg = described_class.new("secret_posts" => { "redirect_url" => "https://example.com/page" })
+      expect(cfg.redirect_url).to eq("https://example.com/page/")
+    end
+
+    it "keeps a baseurl query string intact" do
+      expect(described_class.new("baseurl" => "/blog?v=1").redirect_url).to eq("/blog?v=1")
+    end
+
+    it "normalizes a non-string url_prefix instead of raising" do
+      expect(described_class.new("secret_posts" => { "url_prefix" => 5 }).url_prefix).to eq("5/")
+    end
   end
 
   it "no longer exposes token_length" do

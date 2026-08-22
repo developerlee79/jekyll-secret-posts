@@ -42,10 +42,10 @@ module Jekyll
 
       def redirect_url
         custom = @secret_posts["redirect_url"].to_s.strip
-        return ensure_trailing_slash(custom) unless custom.empty?
+        return normalize_redirect_target(custom) unless custom.empty?
 
         base = @site_config["baseurl"].to_s.strip
-        base.empty? ? "/" : ensure_trailing_slash(base)
+        base.empty? ? "/" : normalize_redirect_target(base)
       end
 
       def list_urls?
@@ -58,7 +58,16 @@ module Jekyll
       private
 
       def ensure_trailing_slash(value)
-        value.end_with?("/") ? value : "#{value}/"
+        str = value.to_s
+        str.end_with?("/") ? str : "#{str}/"
+      end
+
+      # A query string or fragment is not a directory path, so appending a slash
+      # would point at a different target ("/a?b=1" -> "/a?b=1/").
+      def normalize_redirect_target(value)
+        return value if value.include?("?") || value.include?("#")
+
+        ensure_trailing_slash(value)
       end
     end
   end
