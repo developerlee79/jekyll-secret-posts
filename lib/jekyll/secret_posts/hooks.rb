@@ -29,6 +29,9 @@ module Jekyll
           "output" => true,
           "source" => config.source_dir
         }
+        # Must mutate in place: Site#config= aliases this same Array into @exclude
+        # before :after_init fires, so reassigning site.config["exclude"] would not
+        # reach Site#exclude and the secret source dir would stay excluded.
         exclude = site.config["exclude"]
         exclude.reject! { |e| e.to_s == config.source_dir } if exclude.is_a?(Array)
       end
