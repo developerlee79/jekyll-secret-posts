@@ -144,6 +144,41 @@ RSpec.describe Jekyll::SecretPosts::Config do
       cfg = described_class.new("secret_posts" => { "list_urls" => "" })
       expect(cfg.list_urls?).to eq(false)
     end
+
+    it "returns false when secret_posts.list_urls is whitespace only" do
+      cfg = described_class.new("secret_posts" => { "list_urls" => "  " })
+      expect(cfg.list_urls?).to eq(false)
+    end
+
+    it "returns true when secret_posts.list_urls is a non-blank string" do
+      cfg = described_class.new("secret_posts" => { "list_urls" => "yes" })
+      expect(cfg.list_urls?).to eq(true)
+    end
+  end
+
+  context "trailing slash normalization" do
+    it "appends a slash to url_prefix that lacks one" do
+      cfg = described_class.new("secret_posts" => { "url_prefix" => "/hidden" })
+      expect(cfg.url_prefix).to eq("/hidden/")
+    end
+
+    it "leaves an already-slashed url_prefix untouched" do
+      cfg = described_class.new("secret_posts" => { "url_prefix" => "/hidden/" })
+      expect(cfg.url_prefix).to eq("/hidden/")
+    end
+
+    it "leaves an already-slashed redirect_url untouched" do
+      cfg = described_class.new("secret_posts" => { "redirect_url" => "/elsewhere/" })
+      expect(cfg.redirect_url).to eq("/elsewhere/")
+    end
+
+    it "leaves an already-slashed baseurl untouched" do
+      expect(described_class.new("baseurl" => "/blog/").redirect_url).to eq("/blog/")
+    end
+  end
+
+  it "no longer exposes token_length" do
+    expect(described_class.new({})).not_to respond_to(:token_length)
   end
 end
 
