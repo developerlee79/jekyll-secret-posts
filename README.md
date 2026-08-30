@@ -73,7 +73,16 @@ secret_posts:
   list_urls: true
 ```
 
-URLs are hashed using the `JEKYLL_SECRET_SALT` environment variable as salt. the plugin is able to hash without it, but in that case the URL can be guessed, so setting a salt is highly recommended for security. 
+URLs are hashed with SHA-256 using the `JEKYLL_SECRET_SALT` environment variable as salt. The plugin still builds without it, but what gets hashed is only the collection name and the file path — both of which are usually public in your repository — so **without a salt the URLs are guessable**. The build warns when the salt is missing or shorter than 16 characters.
+
+Use a long random value and keep it out of the repository:
+
+```bash
+openssl rand -hex 32
+```
+
+Changing the salt changes every secret URL, so previously shared links stop working. Treat it as a long-lived secret.
+
 
 Set it before build and build:
 
@@ -117,12 +126,40 @@ secret_posts:
 
 | Key | Default | Description |
 |----------------------------|---------|-------------|
-| `source_dir` | `"_secret"` | Directory containing target Markdown files |
-| `collection_name` | `"secret"` | Internal Jekyll collection name |
+| `source_dir` | `"_secret"` | Directory containing target Markdown files. **Derived from `collection_name`, not freely configurable** — see below |
+| `collection_name` | `"secret"` | Internal Jekyll collection name, and therefore the source directory (`_<collection_name>`) |
 | `url_prefix` | `"/s/"` | URL prefix for hashed URLs |
 | `index_layout` | `"default"` | Layout used for the redirect page at the `url_prefix` |
 | `redirect_url` | `baseurl` | URL to which the `url_prefix` index page redirects (If unset, the site `baseurl` is used; if that is also unset, `/` is used) |
 | `list_urls` | `false` | When `true`, prints hashed URLs in Jekyll build log (Use only in safe environment) |
+
+Jekyll resolves a collection's directory as `_<collection_name>` and ignores any other setting, so the source directory follows `collection_name`. To keep secret posts in `_private/`, set `collection_name: "private"` — setting `source_dir: "_private"` alone does nothing. A `source_dir` that disagrees with the derived directory is ignored with a build warning.
+
+`redirect_url` must be either an `http(s)://` URL or a root-relative path such as `/landing`. Anything else — `javascript:`, `data:`, a protocol-relative `//host`, or a bare hostname — is rejected with a build warning and falls back to `/`.
+
+`list_urls` must be a real YAML boolean. A quoted `"true"` is a string, not `true`, and leaves URL logging **off**; this fails closed on purpose, because the flag prints secret URLs into the build log.
+
+<br>
+
+## What the plugin does and does not protect
+
+Secret posts are unlisted, not access-controlled. The files are published as ordinary static pages, so anyone holding the URL can read them, and anyone who can read your repository can recompute the URL if they also know the salt.
+
+The plugin does the following on every secret page:
+
+* sets `sitemap: false` so the URL stays out of `jekyll-sitemap` output
+* injects `<meta name="robots" content="noindex, nofollow">`
+* injects `<meta name="referrer" content="no-referrer">`, so the secret URL is not handed to third parties in the `Referer` header of outbound links, images, or scripts
+
+Only files with YAML front matter become secret posts. Jekyll reads a file without front matter as a static file, which never goes through the hashing, so such files would be published unhashed at `/<collection_name>/<path>`. The plugin drops them from the build instead and names them in a build warning — so **attachments do not belong in the secret directory**. Put images and downloads somewhere else and link to them; note that they are then public to anyone who guesses their URL.
+
+If your site already declares a collection under the same name, the plugin takes over that collection's URLs and removes it from the sitemap, and warns while doing so. Set `collection_name` to something else to keep the existing collection public.
+
+It cannot protect against the following, which are up to your site:
+
+* **Templates that iterate over all documents.** Search-index generators and "all content" listings usually loop over `site.documents` or `site.collections`, which include secret posts. A template like `{% for d in site.documents %}` will publish every secret URL and title into `search.json`. Exclude the secret collection in any such template.
+* **Server-side indexing.** `noindex` is a request; crawlers that ignore it, and anyone with the link, still get the content.
+* **Anything requiring real authentication.** If the content must not be readable by a URL holder, this plugin is the wrong tool.
 
 <br>
 

@@ -70,8 +70,9 @@ RSpec.describe Jekyll::SecretPosts::Config do
       }
     end
 
-    it "reads custom source_dir" do
+    it "derives source_dir from collection_name and ignores the source_dir key" do
       expect(config.source_dir).to eq("_private")
+      expect(config.ignored_source_dir).to be_nil
     end
 
     it "reads custom collection_name" do
@@ -150,9 +151,105 @@ RSpec.describe Jekyll::SecretPosts::Config do
       expect(cfg.list_urls?).to eq(false)
     end
 
-    it "returns true when secret_posts.list_urls is a non-blank string" do
+    it "returns false for a truthy string, so a quoted value cannot enable URL logging" do
       cfg = described_class.new("secret_posts" => { "list_urls" => "yes" })
-      expect(cfg.list_urls?).to eq(true)
+      expect(cfg.list_urls?).to eq(false)
+    end
+
+    it "returns false for the string \"true\", which YAML did not parse as a boolean" do
+      cfg = described_class.new("secret_posts" => { "list_urls" => "true" })
+      expect(cfg.list_urls?).to eq(false)
+    end
+  end
+
+  context "source_dir" do
+    it "derives the directory Jekyll actually reads from collection_name" do
+      cfg = described_class.new("secret_posts" => { "collection_name" => "private" })
+      expect(cfg.source_dir).to eq("_private")
+    end
+
+    it "reports a configured source_dir that Jekyll would ignore" do
+      cfg = described_class.new("secret_posts" => { "source_dir" => "hidden" })
+      expect(cfg.ignored_source_dir).to eq("hidden")
+    end
+
+    it "reports nothing when the configured source_dir matches the derived one" do
+      cfg = described_class.new("secret_posts" => { "source_dir" => "_secret" })
+      expect(cfg.ignored_source_dir).to be_nil
+    end
+
+    it "reports nothing when source_dir is unset" do
+      expect(described_class.new({}).ignored_source_dir).to be_nil
+    end
+  end
+
+  context "salt_strength" do
+    around do |example|
+      original = ENV.fetch("JEKYLL_SECRET_SALT", nil)
+      example.run
+    ensure
+      ENV["JEKYLL_SECRET_SALT"] = original
+    end
+
+    it "returns :missing when the salt is unset" do
+      ENV["JEKYLL_SECRET_SALT"] = nil
+      expect(described_class.new({}).salt_strength).to eq(:missing)
+    end
+
+    it "returns :missing when the salt is whitespace only" do
+      ENV["JEKYLL_SECRET_SALT"] = "   "
+      expect(described_class.new({}).salt_strength).to eq(:missing)
+    end
+
+    it "returns :weak when the salt is shorter than the minimum length" do
+      ENV["JEKYLL_SECRET_SALT"] = "a" * (described_class::MIN_SALT_LENGTH - 1)
+      expect(described_class.new({}).salt_strength).to eq(:weak)
+    end
+
+    it "returns :ok when the salt meets the minimum length" do
+      ENV["JEKYLL_SECRET_SALT"] = "a" * described_class::MIN_SALT_LENGTH
+      expect(described_class.new({}).salt_strength).to eq(:ok)
+    end
+  end
+
+  context "redirect_url safety" do
+    it "rejects a javascript: redirect target and falls back to /" do
+      cfg = described_class.new("secret_posts" => { "redirect_url" => "javascript:alert(1)" })
+      expect(cfg.redirect_url).to eq("/")
+    end
+
+    it "rejects a data: redirect target and falls back to /" do
+      cfg = described_class.new("secret_posts" => { "redirect_url" => "data:text/html,<script>x</script>" })
+      expect(cfg.redirect_url).to eq("/")
+    end
+
+    it "rejects a protocol-relative redirect target and falls back to /" do
+      cfg = described_class.new("secret_posts" => { "redirect_url" => "//evil.example.com" })
+      expect(cfg.redirect_url).to eq("/")
+    end
+
+    it "rejects a backslash-escaped protocol-relative target and falls back to /" do
+      cfg = described_class.new("secret_posts" => { "redirect_url" => "/\\evil.example.com" })
+      expect(cfg.redirect_url).to eq("/")
+    end
+
+    it "rejects a relative target that is not rooted and falls back to /" do
+      cfg = described_class.new("secret_posts" => { "redirect_url" => "evil.example.com" })
+      expect(cfg.redirect_url).to eq("/")
+    end
+
+    it "allows an https redirect target" do
+      cfg = described_class.new("secret_posts" => { "redirect_url" => "https://example.com/page" })
+      expect(cfg.redirect_url).to eq("https://example.com/page/")
+    end
+
+    it "allows a root-relative redirect target" do
+      cfg = described_class.new("secret_posts" => { "redirect_url" => "/landing" })
+      expect(cfg.redirect_url).to eq("/landing/")
+    end
+
+    it "falls back to / when the baseurl itself is not a safe target" do
+      expect(described_class.new("baseurl" => "javascript:alert(1)").redirect_url).to eq("/")
     end
   end
 
@@ -254,6 +351,30 @@ RSpec.describe Jekyll::SecretPosts::UrlTokenizer do
     expect(tokenizer.token_for(nil, "foo.md")).to eq(token)
   end
 
+  it "produces different tokens for different salts" do
+    with_salt = tokenizer.token_for("secret", "foo.md")
+    ENV["JEKYLL_SECRET_SALT"] = "other-salt"
+    expect(described_class.new(config).token_for("secret", "foo.md")).not_to eq(with_salt)
+  end
+
+  # Captured from released behaviour. If one of these fails, restore the
+  # derivation -- do not update the expectation.
+  describe "URL stability" do
+    it "pins the token for a salted build" do
+      expect(tokenizer.token_for("secret", "foo.md")).to eq("580388b7926545a89236abf36550f955")
+    end
+
+    it "pins the token for an unsalted build" do
+      ENV["JEKYLL_SECRET_SALT"] = nil
+      expect(described_class.new(config).token_for("secret", "foo.md"))
+        .to eq("bd7edab84100fcd9ac2e96c1d79b7ff6")
+    end
+
+    it "pins the full URL including prefix and trailing slash" do
+      expect(tokenizer.url_for("secret", "foo.md")).to eq("/s/580388b7926545a89236abf36550f955/")
+    end
+  end
+
   describe "#url_for" do
     it "wraps the token in the configured url_prefix with a trailing slash" do
       expect(tokenizer.url_for("secret", "foo.md")).to eq("/s/#{tokenizer.token_for('secret', 'foo.md')}/")
@@ -322,6 +443,45 @@ RSpec.describe Jekyll::SecretPosts::Generator do
     expect(content).not_to include('&y=2"z')
   end
 
+  describe "salt warnings" do
+    around do |example|
+      original = ENV.fetch("JEKYLL_SECRET_SALT", nil)
+      example.run
+    ensure
+      ENV["JEKYLL_SECRET_SALT"] = original
+    end
+
+    it "warns when JEKYLL_SECRET_SALT is unset" do
+      ENV["JEKYLL_SECRET_SALT"] = nil
+      logger = double("logger", info: nil, warn: nil)
+      allow(Jekyll).to receive(:logger).and_return(logger)
+
+      described_class.new.generate(site)
+
+      expect(logger).to have_received(:warn).with(/JEKYLL_SECRET_SALT is not set/)
+    end
+
+    it "warns when JEKYLL_SECRET_SALT is too short" do
+      ENV["JEKYLL_SECRET_SALT"] = "short"
+      logger = double("logger", info: nil, warn: nil)
+      allow(Jekyll).to receive(:logger).and_return(logger)
+
+      described_class.new.generate(site)
+
+      expect(logger).to have_received(:warn).with(/shorter than/)
+    end
+
+    it "does not warn when JEKYLL_SECRET_SALT is strong enough" do
+      ENV["JEKYLL_SECRET_SALT"] = "a" * Jekyll::SecretPosts::Config::MIN_SALT_LENGTH
+      logger = double("logger", info: nil, warn: nil)
+      allow(Jekyll).to receive(:logger).and_return(logger)
+
+      described_class.new.generate(site)
+
+      expect(logger).not_to have_received(:warn)
+    end
+  end
+
   context "when secret_posts.list_urls is true" do
     let(:site) do
       double(
@@ -340,7 +500,7 @@ RSpec.describe Jekyll::SecretPosts::Generator do
     end
 
     it "logs to Jekyll.logger.info when no secret collection exists" do
-      logger = double("logger", info: nil)
+      logger = double("logger", info: nil, warn: nil)
       allow(Jekyll).to receive(:logger).and_return(logger)
 
       generator = described_class.new
@@ -374,7 +534,7 @@ RSpec.describe Jekyll::SecretPosts::Generator do
       allow(site_with_collection).to receive(:source).and_return("/tmp/source")
       allow(site_with_collection).to receive(:in_theme_dir).and_return("/tmp/source")
 
-      logger = double("logger", info: nil)
+      logger = double("logger", info: nil, warn: nil)
       allow(Jekyll).to receive(:logger).and_return(logger)
 
       original_salt = ENV.fetch("JEKYLL_SECRET_SALT", nil)
@@ -420,10 +580,7 @@ RSpec.describe Jekyll::SecretPosts::Hooks do
 
     it "adds secret collection to site config" do
       described_class.register_secret_collection(site)
-      expect(site.config["collections"]["secret"]).to eq(
-        "output" => true,
-        "source" => "_secret"
-      )
+      expect(site.config["collections"]["secret"]).to eq("output" => true)
     end
 
     it "does not overwrite existing collection" do
@@ -431,9 +588,44 @@ RSpec.describe Jekyll::SecretPosts::Hooks do
       described_class.register_secret_collection(site)
       expect(site.config["collections"]["secret"]).to eq("existing" => true)
     end
+
+    it "un-excludes the directory Jekyll actually reads" do
+      excluding_site = double("Site", config: { "collections" => {}, "exclude" => %w[_secret assets] })
+      described_class.register_secret_collection(excluding_site)
+      expect(excluding_site.config["exclude"]).to eq(["assets"])
+    end
+
+    it "leaves an unrelated configured source_dir excluded, so its files stay unpublished" do
+      leaky_site = double(
+        "Site",
+        config: {
+          "collections" => {},
+          "exclude" => ["hidden"],
+          "secret_posts" => { "source_dir" => "hidden" }
+        }
+      )
+      allow(Jekyll).to receive(:logger).and_return(double("logger", warn: nil, info: nil))
+
+      described_class.register_secret_collection(leaky_site)
+
+      expect(leaky_site.config["exclude"]).to eq(["hidden"])
+    end
+
+    it "warns when the configured source_dir is not the directory Jekyll reads" do
+      logger = double("logger", warn: nil, info: nil)
+      allow(Jekyll).to receive(:logger).and_return(logger)
+      misconfigured = double(
+        "Site",
+        config: { "collections" => {}, "secret_posts" => { "source_dir" => "hidden" } }
+      )
+
+      described_class.register_secret_collection(misconfigured)
+
+      expect(logger).to have_received(:warn).with(/source_dir "hidden" is ignored/)
+    end
   end
 
-  describe ".inject_noindex" do
+  describe ".inject_secret_meta" do
     let(:doc) do
       OpenStruct.new(
         collection: OpenStruct.new(label: "secret"),
@@ -443,9 +635,14 @@ RSpec.describe Jekyll::SecretPosts::Hooks do
     end
 
     it "injects noindex meta after head" do
-      described_class.inject_noindex(doc)
+      described_class.inject_secret_meta(doc)
       expect(doc.output).to include('<meta name="robots" content="noindex, nofollow">')
       expect(doc.output).to include("<head>\n  <meta name=\"robots\"")
+    end
+
+    it "injects a no-referrer policy so the secret URL is not leaked in the Referer header" do
+      described_class.inject_secret_meta(doc)
+      expect(doc.output).to include('<meta name="referrer" content="no-referrer">')
     end
 
     it "falls back to prepend when no head tag" do
@@ -454,8 +651,88 @@ RSpec.describe Jekyll::SecretPosts::Hooks do
         site: OpenStruct.new(config: {}),
         output: "<html><body>Hi</body></html>"
       )
-      described_class.inject_noindex(doc_without_head)
+      described_class.inject_secret_meta(doc_without_head)
       expect(doc_without_head.output).to start_with('<meta name="robots" content="noindex, nofollow">')
+      expect(doc_without_head.output).to include('<meta name="referrer" content="no-referrer">')
+    end
+
+    it "injects into a head tag that carries attributes" do
+      doc_with_attrs = OpenStruct.new(
+        collection: OpenStruct.new(label: "secret"),
+        site: OpenStruct.new(config: {}),
+        output: %(<!DOCTYPE html>\n<html>\n<head prefix="og: https://ogp.me/ns#">\n</head>\n<body></body>\n</html>)
+      )
+      described_class.inject_secret_meta(doc_with_attrs)
+
+      expect(doc_with_attrs.output).to start_with("<!DOCTYPE html>")
+      expect(doc_with_attrs.output).to include(
+        %(<head prefix="og: https://ogp.me/ns#">\n  <meta name="robots" content="noindex, nofollow">)
+      )
+    end
+
+    it "keeps the doctype first so the page does not fall into quirks mode" do
+      doc_with_attrs = OpenStruct.new(
+        collection: OpenStruct.new(label: "secret"),
+        site: OpenStruct.new(config: {}),
+        output: %(<!DOCTYPE html>\n<html>\n<head lang="en">\n</head>\n<body></body>\n</html>)
+      )
+      described_class.inject_secret_meta(doc_with_attrs)
+
+      expect(doc_with_attrs.output.lines.first.strip).to eq("<!DOCTYPE html>")
+    end
+
+    it "matches the whole head tag when an attribute value contains a > character" do
+      doc = OpenStruct.new(
+        collection: OpenStruct.new(label: "secret"),
+        site: OpenStruct.new(config: {}),
+        output: %(<!DOCTYPE html>\n<html>\n<head data-x="a>b" class="foo">\n</head>\n<body></body>\n</html>)
+      )
+      described_class.inject_secret_meta(doc)
+
+      expect(doc.output).to include(
+        %(<head data-x="a>b" class="foo">\n  <meta name="robots" content="noindex, nofollow">)
+      )
+      expect(doc.output).not_to include(%(data-x="a>\n))
+    end
+
+    it "does not mistake a header element for the head tag" do
+      doc_with_header = OpenStruct.new(
+        collection: OpenStruct.new(label: "secret"),
+        site: OpenStruct.new(config: {}),
+        output: "<html><body><header>Title</header></body></html>"
+      )
+      described_class.inject_secret_meta(doc_with_header)
+
+      expect(doc_with_header.output).to start_with('<meta name="robots" content="noindex, nofollow">')
+      expect(doc_with_header.output).to include("<header>Title</header>")
+    end
+
+    it "leaves documents outside the secret collection untouched" do
+      public_doc = OpenStruct.new(
+        collection: OpenStruct.new(label: "posts"),
+        site: OpenStruct.new(config: {}),
+        output: "<html><head></head><body>Hi</body></html>"
+      )
+      described_class.inject_secret_meta(public_doc)
+      expect(public_doc.output).not_to include("robots")
+    end
+  end
+
+  describe ".inject_secret_index_meta" do
+    it "injects the meta tags into the generated secret index page" do
+      page = OpenStruct.new(
+        data: { "secret_index" => true },
+        output: "<html><head></head><body>Redirecting...</body></html>"
+      )
+      described_class.inject_secret_index_meta(page)
+      expect(page.output).to include('<meta name="robots" content="noindex, nofollow">')
+      expect(page.output).to include('<meta name="referrer" content="no-referrer">')
+    end
+
+    it "leaves unrelated pages untouched" do
+      page = OpenStruct.new(data: {}, output: "<html><head></head><body>Hi</body></html>")
+      described_class.inject_secret_index_meta(page)
+      expect(page.output).not_to include("robots")
     end
   end
 end
@@ -518,6 +795,162 @@ RSpec.describe "Secret posts integration" do
       expect(content).to include("0;url=/")
       expect(content).to include("Redirecting...")
       expect(content).to include("Go to homepage")
+    end
+  end
+
+  it "does not publish files in the secret directory that have no front matter" do
+    Dir.mktmpdir do |tmp|
+      source = tmp
+      dest = File.join(tmp, "_site")
+      FileUtils.mkdir_p(File.join(source, "_secret", "attach"))
+      FileUtils.mkdir_p(File.join(source, "assets"))
+      File.write(File.join(source, "_secret", "post.md"), "---\ntitle: Secret\n---\nBody\n")
+      File.write(File.join(source, "_secret", "diagram.png"), "IMAGE_SENTINEL")
+      File.write(File.join(source, "_secret", "attach", "notes.pdf"), "PDF_SENTINEL")
+      File.write(File.join(source, "_secret", "no-front-matter.md"), "PLAINTEXT_SENTINEL\n")
+      File.write(File.join(source, "assets", "public.png"), "PUBLIC_SENTINEL")
+      File.write(
+        File.join(source, "_config.yml"),
+        "plugins:\n  - jekyll-secret-posts\nsecret_posts:\n  index_layout: null\n"
+      )
+      config = Jekyll.configuration(
+        "source" => source,
+        "destination" => dest,
+        "plugins" => ["jekyll-secret-posts"]
+      )
+      Jekyll::Site.new(config).process
+
+      built = Dir.glob(File.join(dest, "**", "*")).select { |f| File.file?(f) }
+      leaked = built.select { |f| File.read(f).match?(/IMAGE_SENTINEL|PDF_SENTINEL|PLAINTEXT_SENTINEL/) }
+      expect(leaked).to eq([])
+      expect(File.directory?(File.join(dest, "secret"))).to eq(false)
+      # Static files outside the secret collection are untouched.
+      expect(File.read(File.join(dest, "assets", "public.png"))).to eq("PUBLIC_SENTINEL")
+    end
+  end
+
+  it "injects the meta tags through a real layout, not just the layoutless page" do
+    Dir.mktmpdir do |tmp|
+      source = tmp
+      dest = File.join(tmp, "_site")
+      FileUtils.mkdir_p(File.join(source, "_secret"))
+      FileUtils.mkdir_p(File.join(source, "_layouts"))
+      File.write(File.join(source, "_secret", "post.md"), "---\ntitle: Secret\nlayout: default\n---\nBody\n")
+      File.write(
+        File.join(source, "_layouts", "default.html"),
+        %(<!DOCTYPE html>\n<html lang="en">\n<head prefix="og: https://ogp.me/ns#">\n) +
+        %(<title>t</title>\n</head>\n<body>{{ content }}</body>\n</html>\n)
+      )
+      File.write(
+        File.join(source, "_config.yml"),
+        "plugins:\n  - jekyll-secret-posts\n"
+      )
+      config = Jekyll.configuration(
+        "source" => source,
+        "destination" => dest,
+        "plugins" => ["jekyll-secret-posts"]
+      )
+      Jekyll::Site.new(config).process
+
+      html_files = Dir.glob(File.join(dest, "s", "**", "*.html"))
+      expect(html_files.size).to eq(2)
+      html_files.each do |path|
+        content = File.read(path)
+        expect(content.lines.first.strip).to eq("<!DOCTYPE html>")
+        expect(content).to include('<meta name="robots" content="noindex, nofollow">')
+        expect(content).to include('<meta name="referrer" content="no-referrer">')
+      end
+    end
+  end
+
+  it "warns instead of silently taking over a collection the site already declared" do
+    Dir.mktmpdir do |tmp|
+      source = tmp
+      dest = File.join(tmp, "_site")
+      FileUtils.mkdir_p(File.join(source, "_secret"))
+      File.write(File.join(source, "_secret", "mine.md"), "---\ntitle: Mine\n---\nBody\n")
+      File.write(
+        File.join(source, "_config.yml"),
+        <<~YAML
+          plugins:
+            - jekyll-secret-posts
+          collections:
+            secret:
+              output: true
+              permalink: "/:collection/:path/"
+          secret_posts:
+            index_layout: null
+        YAML
+      )
+      config = Jekyll.configuration(
+        "source" => source,
+        "destination" => dest,
+        "plugins" => ["jekyll-secret-posts"]
+      )
+
+      logged = []
+      allow(Jekyll.logger).to receive(:warn) { |*args| logged << args.join(" ") }
+
+      Jekyll::Site.new(config).process
+
+      expect(logged.grep(/already declared/).size).to eq(1)
+    end
+  end
+
+  it "keeps an excluded non-collection directory out of the build" do
+    Dir.mktmpdir do |tmp|
+      source = tmp
+      dest = File.join(tmp, "_site")
+      FileUtils.mkdir_p(File.join(source, "hidden"))
+      File.write(
+        File.join(source, "hidden", "leak.md"),
+        "---\ntitle: Secret\n---\nSENTINEL_BODY\n"
+      )
+      File.write(
+        File.join(source, "_config.yml"),
+        "plugins:\n  - jekyll-secret-posts\nexclude: [\"hidden\"]\n" \
+        "secret_posts:\n  index_layout: null\n  source_dir: \"hidden\"\n"
+      )
+      config = Jekyll.configuration(
+        "source" => source,
+        "destination" => dest,
+        "plugins" => ["jekyll-secret-posts"]
+      )
+      Jekyll::Site.new(config).process
+
+      built = Dir.glob(File.join(dest, "**", "*")).select { |f| File.file?(f) }
+      expect(built.map { |f| f.sub(dest, "") }).to eq(["/s/index.html"])
+      expect(built.none? { |f| File.read(f).include?("SENTINEL_BODY") }).to eq(true)
+    end
+  end
+
+  it "marks the secret index page and every secret document as noindex and no-referrer" do
+    Dir.mktmpdir do |tmp|
+      source = tmp
+      dest = File.join(tmp, "_site")
+      FileUtils.mkdir_p(File.join(source, "_secret"))
+      File.write(
+        File.join(source, "_secret", "test-post.md"),
+        "---\ntitle: Secret\n---\nBody\n"
+      )
+      File.write(
+        File.join(source, "_config.yml"),
+        "plugins:\n  - jekyll-secret-posts\nsecret_posts:\n  index_layout: null\n"
+      )
+      config = Jekyll.configuration(
+        "source" => source,
+        "destination" => dest,
+        "plugins" => ["jekyll-secret-posts"]
+      )
+      Jekyll::Site.new(config).process
+
+      html_files = Dir.glob(File.join(dest, "s", "**", "*.html"))
+      expect(html_files.size).to eq(2)
+      html_files.each do |path|
+        content = File.read(path)
+        expect(content).to include('<meta name="robots" content="noindex, nofollow">')
+        expect(content).to include('<meta name="referrer" content="no-referrer">')
+      end
     end
   end
 
