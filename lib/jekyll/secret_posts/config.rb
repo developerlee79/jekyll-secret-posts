@@ -5,7 +5,6 @@ require "jekyll"
 module Jekyll
   module SecretPosts
     class Config
-      DEFAULT_SOURCE_DIR = "_secret"
       DEFAULT_COLLECTION_NAME = "secret"
       DEFAULT_URL_PREFIX = "/s/"
       DEFAULT_INDEX_LAYOUT = "default"
@@ -24,8 +23,19 @@ module Jekyll
         @secret_posts = site_config["secret_posts"] || {}
       end
 
+      # Derived, not configurable: Jekyll::Collection#relative_directory resolves
+      # a collection to "_#{label}" and ignores every other key.
       def source_dir
-        @secret_posts["source_dir"] || DEFAULT_SOURCE_DIR
+        "_#{collection_name}"
+      end
+
+      # Honouring a mismatched source_dir un-excluded whatever directory it named,
+      # publishing a non-underscored one as ordinary site content, secret body and all.
+      def ignored_source_dir
+        configured = @secret_posts["source_dir"].to_s.strip
+        return nil if configured.empty? || configured == source_dir
+
+        configured
       end
 
       def collection_name

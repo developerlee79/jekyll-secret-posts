@@ -161,6 +161,27 @@ RSpec.describe Jekyll::SecretPosts::Config do
     end
   end
 
+  context "source_dir" do
+    it "derives the directory Jekyll actually reads from collection_name" do
+      cfg = described_class.new("secret_posts" => { "collection_name" => "private" })
+      expect(cfg.source_dir).to eq("_private")
+    end
+
+    it "reports a configured source_dir that Jekyll would ignore" do
+      cfg = described_class.new("secret_posts" => { "source_dir" => "hidden" })
+      expect(cfg.ignored_source_dir).to eq("hidden")
+    end
+
+    it "reports nothing when the configured source_dir matches the derived one" do
+      cfg = described_class.new("secret_posts" => { "source_dir" => "_secret" })
+      expect(cfg.ignored_source_dir).to be_nil
+    end
+
+    it "reports nothing when source_dir is unset" do
+      expect(described_class.new({}).ignored_source_dir).to be_nil
+    end
+  end
+
   context "salt_strength" do
     around do |example|
       original = ENV.fetch("JEKYLL_SECRET_SALT", nil)
@@ -535,16 +556,48 @@ RSpec.describe Jekyll::SecretPosts::Hooks do
 
     it "adds secret collection to site config" do
       described_class.register_secret_collection(site)
-      expect(site.config["collections"]["secret"]).to eq(
-        "output" => true,
-        "source" => "_secret"
-      )
+      expect(site.config["collections"]["secret"]).to eq("output" => true)
     end
 
     it "does not overwrite existing collection" do
       site.config["collections"]["secret"] = { "existing" => true }
       described_class.register_secret_collection(site)
       expect(site.config["collections"]["secret"]).to eq("existing" => true)
+    end
+
+    it "un-excludes the directory Jekyll actually reads" do
+      excluding_site = double("Site", config: { "collections" => {}, "exclude" => %w[_secret assets] })
+      described_class.register_secret_collection(excluding_site)
+      expect(excluding_site.config["exclude"]).to eq(["assets"])
+    end
+
+    it "leaves an unrelated configured source_dir excluded, so its files stay unpublished" do
+      leaky_site = double(
+        "Site",
+        config: {
+          "collections" => {},
+          "exclude" => ["hidden"],
+          "secret_posts" => { "source_dir" => "hidden" }
+        }
+      )
+      allow(Jekyll).to receive(:logger).and_return(double("logger", warn: nil, info: nil))
+
+      described_class.register_secret_collection(leaky_site)
+
+      expect(leaky_site.config["exclude"]).to eq(["hidden"])
+    end
+
+    it "warns when the configured source_dir is not the directory Jekyll reads" do
+      logger = double("logger", warn: nil, info: nil)
+      allow(Jekyll).to receive(:logger).and_return(logger)
+      misconfigured = double(
+        "Site",
+        config: { "collections" => {}, "secret_posts" => { "source_dir" => "hidden" } }
+      )
+
+      described_class.register_secret_collection(misconfigured)
+
+      expect(logger).to have_received(:warn).with(/source_dir "hidden" is ignored/)
     end
   end
 
@@ -704,6 +757,33 @@ RSpec.describe "Secret posts integration" do
       expect(content).to include("0;url=/")
       expect(content).to include("Redirecting...")
       expect(content).to include("Go to homepage")
+    end
+  end
+
+  it "keeps an excluded non-collection directory out of the build" do
+    Dir.mktmpdir do |tmp|
+      source = tmp
+      dest = File.join(tmp, "_site")
+      FileUtils.mkdir_p(File.join(source, "hidden"))
+      File.write(
+        File.join(source, "hidden", "leak.md"),
+        "---\ntitle: Secret\n---\nSENTINEL_BODY\n"
+      )
+      File.write(
+        File.join(source, "_config.yml"),
+        "plugins:\n  - jekyll-secret-posts\nexclude: [\"hidden\"]\n" \
+        "secret_posts:\n  index_layout: null\n  source_dir: \"hidden\"\n"
+      )
+      config = Jekyll.configuration(
+        "source" => source,
+        "destination" => dest,
+        "plugins" => ["jekyll-secret-posts"]
+      )
+      Jekyll::Site.new(config).process
+
+      built = Dir.glob(File.join(dest, "**", "*")).select { |f| File.file?(f) }
+      expect(built.map { |f| f.sub(dest, "") }).to eq(["/s/index.html"])
+      expect(built.none? { |f| File.read(f).include?("SENTINEL_BODY") }).to eq(true)
     end
   end
 

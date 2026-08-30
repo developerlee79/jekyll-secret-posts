@@ -37,18 +37,28 @@ module Jekyll
 
       def self.register_secret_collection(site)
         config = Config.new(site.config)
+        warn_about_ignored_source_dir(config)
         collections = site.config["collections"] ||= {}
         return if collections.key?(config.collection_name)
 
-        collections[config.collection_name] = {
-          "output" => true,
-          "source" => config.source_dir
-        }
+        collections[config.collection_name] = { "output" => true }
+        # Only ever the derived "_<collection_name>": an underscored directory is
+        # never served as ordinary content, so un-excluding it publishes nothing new.
+        #
         # Must mutate in place: Site#config= aliases this same Array into @exclude
         # before :after_init fires, so reassigning site.config["exclude"] would not
         # reach Site#exclude and the secret source dir would stay excluded.
         exclude = site.config["exclude"]
         exclude.reject! { |e| e.to_s == config.source_dir } if exclude.is_a?(Array)
+      end
+
+      def self.warn_about_ignored_source_dir(config)
+        ignored = config.ignored_source_dir
+        return unless ignored
+
+        Jekyll.logger.warn "Secret posts: source_dir #{ignored.inspect} is ignored. Jekyll reads the " \
+                           "secret collection from #{config.source_dir.inspect}; rename the directory " \
+                           "or set secret_posts.collection_name instead."
       end
 
       def self.apply_secret_permalink(doc)
