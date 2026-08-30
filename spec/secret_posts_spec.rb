@@ -161,6 +161,35 @@ RSpec.describe Jekyll::SecretPosts::Config do
     end
   end
 
+  context "salt_strength" do
+    around do |example|
+      original = ENV.fetch("JEKYLL_SECRET_SALT", nil)
+      example.run
+    ensure
+      ENV["JEKYLL_SECRET_SALT"] = original
+    end
+
+    it "returns :missing when the salt is unset" do
+      ENV["JEKYLL_SECRET_SALT"] = nil
+      expect(described_class.new({}).salt_strength).to eq(:missing)
+    end
+
+    it "returns :missing when the salt is whitespace only" do
+      ENV["JEKYLL_SECRET_SALT"] = "   "
+      expect(described_class.new({}).salt_strength).to eq(:missing)
+    end
+
+    it "returns :weak when the salt is shorter than the minimum length" do
+      ENV["JEKYLL_SECRET_SALT"] = "a" * (described_class::MIN_SALT_LENGTH - 1)
+      expect(described_class.new({}).salt_strength).to eq(:weak)
+    end
+
+    it "returns :ok when the salt meets the minimum length" do
+      ENV["JEKYLL_SECRET_SALT"] = "a" * described_class::MIN_SALT_LENGTH
+      expect(described_class.new({}).salt_strength).to eq(:ok)
+    end
+  end
+
   context "redirect_url safety" do
     it "rejects a javascript: redirect target and falls back to /" do
       cfg = described_class.new("secret_posts" => { "redirect_url" => "javascript:alert(1)" })
@@ -367,6 +396,45 @@ RSpec.describe Jekyll::SecretPosts::Generator do
     content = pages.first.content
     expect(content).to include("&amp;y=2&quot;z")
     expect(content).not_to include('&y=2"z')
+  end
+
+  describe "salt warnings" do
+    around do |example|
+      original = ENV.fetch("JEKYLL_SECRET_SALT", nil)
+      example.run
+    ensure
+      ENV["JEKYLL_SECRET_SALT"] = original
+    end
+
+    it "warns when JEKYLL_SECRET_SALT is unset" do
+      ENV["JEKYLL_SECRET_SALT"] = nil
+      logger = double("logger", info: nil, warn: nil)
+      allow(Jekyll).to receive(:logger).and_return(logger)
+
+      described_class.new.generate(site)
+
+      expect(logger).to have_received(:warn).with(/JEKYLL_SECRET_SALT is not set/)
+    end
+
+    it "warns when JEKYLL_SECRET_SALT is too short" do
+      ENV["JEKYLL_SECRET_SALT"] = "short"
+      logger = double("logger", info: nil, warn: nil)
+      allow(Jekyll).to receive(:logger).and_return(logger)
+
+      described_class.new.generate(site)
+
+      expect(logger).to have_received(:warn).with(/shorter than/)
+    end
+
+    it "does not warn when JEKYLL_SECRET_SALT is strong enough" do
+      ENV["JEKYLL_SECRET_SALT"] = "a" * Jekyll::SecretPosts::Config::MIN_SALT_LENGTH
+      logger = double("logger", info: nil, warn: nil)
+      allow(Jekyll).to receive(:logger).and_return(logger)
+
+      described_class.new.generate(site)
+
+      expect(logger).not_to have_received(:warn)
+    end
   end
 
   context "when secret_posts.list_urls is true" do

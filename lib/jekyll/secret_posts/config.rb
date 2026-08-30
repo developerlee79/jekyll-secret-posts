@@ -11,6 +11,10 @@ module Jekyll
       DEFAULT_INDEX_LAYOUT = "default"
       DEFAULT_REDIRECT_URL = "/"
 
+      # Below this a salt adds little work for an attacker who already knows the
+      # (public) collection name and file path that feed the token.
+      MIN_SALT_LENGTH = 16
+
       # Everything else ("javascript:", "data:", "//host") is rejected.
       SAFE_ABSOLUTE_URL = %r{\Ahttps?://}i.freeze
       ROOT_RELATIVE_URL = %r{\A/(?!/)}.freeze
@@ -36,6 +40,14 @@ module Jekyll
 
       def salt
         ENV["JEKYLL_SECRET_SALT"].to_s
+      end
+
+      def salt_strength
+        trimmed = salt.strip
+        return :missing if trimmed.empty?
+        return :weak if trimmed.length < MIN_SALT_LENGTH
+
+        :ok
       end
 
       def secret_index_layout

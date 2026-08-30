@@ -11,13 +11,26 @@ module Jekyll
       safe true
       priority :high
 
+      SALT_WARNINGS = {
+        missing: "Secret posts: JEKYLL_SECRET_SALT is not set, so secret URLs can be derived " \
+                 "from the collection name and file path alone. Set it before building.",
+        weak: "Secret posts: JEKYLL_SECRET_SALT is shorter than " \
+              "#{Config::MIN_SALT_LENGTH} characters. Use a longer random value."
+      }.freeze
+
       def generate(site)
         config = Config.new(site.config)
+        warn_about_salt(config)
         add_secret_index_page(site, config)
         log_secret_urls(site, config) if config.list_urls?
       end
 
       private
+
+      def warn_about_salt(config)
+        warning = SALT_WARNINGS[config.salt_strength]
+        Jekyll.logger.warn warning if warning
+      end
 
       def add_secret_index_page(site, config)
         prefix_dir = config.url_prefix.gsub(%r{\A/|/\z}, "")
