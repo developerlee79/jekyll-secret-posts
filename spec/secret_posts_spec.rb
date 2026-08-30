@@ -150,9 +150,50 @@ RSpec.describe Jekyll::SecretPosts::Config do
       expect(cfg.list_urls?).to eq(false)
     end
 
-    it "returns true when secret_posts.list_urls is a non-blank string" do
+    it "returns false for a truthy string, so a quoted value cannot enable URL logging" do
       cfg = described_class.new("secret_posts" => { "list_urls" => "yes" })
-      expect(cfg.list_urls?).to eq(true)
+      expect(cfg.list_urls?).to eq(false)
+    end
+
+    it "returns false for the string \"true\", which YAML did not parse as a boolean" do
+      cfg = described_class.new("secret_posts" => { "list_urls" => "true" })
+      expect(cfg.list_urls?).to eq(false)
+    end
+  end
+
+  context "redirect_url safety" do
+    it "rejects a javascript: redirect target and falls back to /" do
+      cfg = described_class.new("secret_posts" => { "redirect_url" => "javascript:alert(1)" })
+      expect(cfg.redirect_url).to eq("/")
+    end
+
+    it "rejects a data: redirect target and falls back to /" do
+      cfg = described_class.new("secret_posts" => { "redirect_url" => "data:text/html,<script>x</script>" })
+      expect(cfg.redirect_url).to eq("/")
+    end
+
+    it "rejects a protocol-relative redirect target and falls back to /" do
+      cfg = described_class.new("secret_posts" => { "redirect_url" => "//evil.example.com" })
+      expect(cfg.redirect_url).to eq("/")
+    end
+
+    it "rejects a relative target that is not rooted and falls back to /" do
+      cfg = described_class.new("secret_posts" => { "redirect_url" => "evil.example.com" })
+      expect(cfg.redirect_url).to eq("/")
+    end
+
+    it "allows an https redirect target" do
+      cfg = described_class.new("secret_posts" => { "redirect_url" => "https://example.com/page" })
+      expect(cfg.redirect_url).to eq("https://example.com/page/")
+    end
+
+    it "allows a root-relative redirect target" do
+      cfg = described_class.new("secret_posts" => { "redirect_url" => "/landing" })
+      expect(cfg.redirect_url).to eq("/landing/")
+    end
+
+    it "falls back to / when the baseurl itself is not a safe target" do
+      expect(described_class.new("baseurl" => "javascript:alert(1)").redirect_url).to eq("/")
     end
   end
 

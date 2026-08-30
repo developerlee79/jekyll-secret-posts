@@ -1,5 +1,7 @@
 # frozen_string_literal: true
 
+require "jekyll"
+
 module Jekyll
   module SecretPosts
     class Config
@@ -7,6 +9,11 @@ module Jekyll
       DEFAULT_COLLECTION_NAME = "secret"
       DEFAULT_URL_PREFIX = "/s/"
       DEFAULT_INDEX_LAYOUT = "default"
+      DEFAULT_REDIRECT_URL = "/"
+
+      # Everything else ("javascript:", "data:", "//host") is rejected.
+      SAFE_ABSOLUTE_URL = %r{\Ahttps?://}i.freeze
+      ROOT_RELATIVE_URL = %r{\A/(?!/)}.freeze
 
       def initialize(site_config)
         @site_config = site_config
@@ -42,20 +49,31 @@ module Jekyll
 
       def redirect_url
         custom = @secret_posts["redirect_url"].to_s.strip
-        return normalize_redirect_target(custom) unless custom.empty?
+        return safe_redirect_target(custom, "secret_posts.redirect_url") unless custom.empty?
 
         base = @site_config["baseurl"].to_s.strip
-        base.empty? ? "/" : normalize_redirect_target(base)
+        base.empty? ? DEFAULT_REDIRECT_URL : safe_redirect_target(base, "baseurl")
       end
 
+      # Strict boolean: this prints secret URLs into the build log, so anything
+      # YAML did not parse as `true` (the string "true", say) must not enable it.
       def list_urls?
-        value = @secret_posts["list_urls"]
-        return false unless value
-
-        value.to_s.strip != ""
+        @secret_posts["list_urls"] == true
       end
 
       private
+
+      def safe_redirect_target(value, source_key)
+        return normalize_redirect_target(value) if redirect_target_allowed?(value)
+
+        Jekyll.logger.warn "Secret posts: ignoring unsafe #{source_key} #{value.inspect}; " \
+                           "using #{DEFAULT_REDIRECT_URL.inspect} instead"
+        DEFAULT_REDIRECT_URL
+      end
+
+      def redirect_target_allowed?(value)
+        value.match?(SAFE_ABSOLUTE_URL) || value.match?(ROOT_RELATIVE_URL)
+      end
 
       def ensure_trailing_slash(value)
         str = value.to_s
