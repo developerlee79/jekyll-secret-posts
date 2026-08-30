@@ -798,6 +798,37 @@ RSpec.describe "Secret posts integration" do
     end
   end
 
+  it "does not publish files in the secret directory that have no front matter" do
+    Dir.mktmpdir do |tmp|
+      source = tmp
+      dest = File.join(tmp, "_site")
+      FileUtils.mkdir_p(File.join(source, "_secret", "attach"))
+      FileUtils.mkdir_p(File.join(source, "assets"))
+      File.write(File.join(source, "_secret", "post.md"), "---\ntitle: Secret\n---\nBody\n")
+      File.write(File.join(source, "_secret", "diagram.png"), "IMAGE_SENTINEL")
+      File.write(File.join(source, "_secret", "attach", "notes.pdf"), "PDF_SENTINEL")
+      File.write(File.join(source, "_secret", "no-front-matter.md"), "PLAINTEXT_SENTINEL\n")
+      File.write(File.join(source, "assets", "public.png"), "PUBLIC_SENTINEL")
+      File.write(
+        File.join(source, "_config.yml"),
+        "plugins:\n  - jekyll-secret-posts\nsecret_posts:\n  index_layout: null\n"
+      )
+      config = Jekyll.configuration(
+        "source" => source,
+        "destination" => dest,
+        "plugins" => ["jekyll-secret-posts"]
+      )
+      Jekyll::Site.new(config).process
+
+      built = Dir.glob(File.join(dest, "**", "*")).select { |f| File.file?(f) }
+      leaked = built.select { |f| File.read(f).match?(/IMAGE_SENTINEL|PDF_SENTINEL|PLAINTEXT_SENTINEL/) }
+      expect(leaked).to eq([])
+      expect(File.directory?(File.join(dest, "secret"))).to eq(false)
+      # Static files outside the secret collection are untouched.
+      expect(File.read(File.join(dest, "assets", "public.png"))).to eq("PUBLIC_SENTINEL")
+    end
+  end
+
   it "injects the meta tags through a real layout, not just the layoutless page" do
     Dir.mktmpdir do |tmp|
       source = tmp

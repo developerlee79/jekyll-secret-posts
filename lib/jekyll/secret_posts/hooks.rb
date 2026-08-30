@@ -23,12 +23,23 @@ module Jekyll
       SECRET_INDEX_FLAG = "secret_index"
 
       def self.register
+        register_site_hooks
+        register_render_hooks
+      end
+
+      def self.register_site_hooks
         Jekyll::Hooks.register(:site, :after_init) do |site|
           register_secret_collection(site)
+        end
+        Jekyll::Hooks.register(:site, :post_read) do |site|
+          drop_secret_static_files(site)
         end
         Jekyll::Hooks.register(:documents, :post_init) do |doc|
           apply_secret_permalink(doc)
         end
+      end
+
+      def self.register_render_hooks
         Jekyll::Hooks.register(:documents, :post_render) do |doc|
           inject_secret_meta(doc)
         end
@@ -52,6 +63,28 @@ module Jekyll
         # reach Site#exclude and the secret source dir would stay excluded.
         exclude = site.config["exclude"]
         exclude.reject! { |e| e.to_s == config.source_dir } if exclude.is_a?(Array)
+      end
+
+      # A file in the secret directory with no YAML front matter is read as a
+      # StaticFile, not a Document: it never reaches the tokenizer or the meta
+      # injection, so Jekyll would publish it verbatim at the collection's
+      # default "/:collection/:path" -- a guessable path with no token. Drop it
+      # from the build instead, and say which files were skipped.
+      def self.drop_secret_static_files(site)
+        config = Config.new(site.config)
+        label = config.collection_name
+        skipped = site.static_files.select { |file| file.type.to_s == label }
+        return if skipped.empty?
+
+        site.static_files.reject! { |file| file.type.to_s == label }
+        warn_about_skipped_static_files(skipped, config.source_dir)
+      end
+
+      def self.warn_about_skipped_static_files(skipped, source_dir)
+        Jekyll.logger.warn "Secret posts: skipped #{skipped.size} file(s) in #{source_dir} with no front " \
+                           "matter, which would otherwise be published unhashed: " \
+                           "#{skipped.map(&:relative_path).join(', ')}. Add front matter to publish a file " \
+                           "as a secret post, or move attachments outside the secret directory."
       end
 
       def self.warn_about_ignored_source_dir(config)
