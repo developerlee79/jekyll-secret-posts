@@ -70,8 +70,9 @@ RSpec.describe Jekyll::SecretPosts::Config do
       }
     end
 
-    it "reads custom source_dir" do
+    it "derives source_dir from collection_name and ignores the source_dir key" do
       expect(config.source_dir).to eq("_private")
+      expect(config.ignored_source_dir).to be_nil
     end
 
     it "reads custom collection_name" do
@@ -794,6 +795,40 @@ RSpec.describe "Secret posts integration" do
       expect(content).to include("0;url=/")
       expect(content).to include("Redirecting...")
       expect(content).to include("Go to homepage")
+    end
+  end
+
+  it "injects the meta tags through a real layout, not just the layoutless page" do
+    Dir.mktmpdir do |tmp|
+      source = tmp
+      dest = File.join(tmp, "_site")
+      FileUtils.mkdir_p(File.join(source, "_secret"))
+      FileUtils.mkdir_p(File.join(source, "_layouts"))
+      File.write(File.join(source, "_secret", "post.md"), "---\ntitle: Secret\nlayout: default\n---\nBody\n")
+      File.write(
+        File.join(source, "_layouts", "default.html"),
+        %(<!DOCTYPE html>\n<html lang="en">\n<head prefix="og: https://ogp.me/ns#">\n) +
+        %(<title>t</title>\n</head>\n<body>{{ content }}</body>\n</html>\n)
+      )
+      File.write(
+        File.join(source, "_config.yml"),
+        "plugins:\n  - jekyll-secret-posts\n"
+      )
+      config = Jekyll.configuration(
+        "source" => source,
+        "destination" => dest,
+        "plugins" => ["jekyll-secret-posts"]
+      )
+      Jekyll::Site.new(config).process
+
+      html_files = Dir.glob(File.join(dest, "s", "**", "*.html"))
+      expect(html_files.size).to eq(2)
+      html_files.each do |path|
+        content = File.read(path)
+        expect(content.lines.first.strip).to eq("<!DOCTYPE html>")
+        expect(content).to include('<meta name="robots" content="noindex, nofollow">')
+        expect(content).to include('<meta name="referrer" content="no-referrer">')
+      end
     end
   end
 
