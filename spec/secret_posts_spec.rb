@@ -470,6 +470,43 @@ RSpec.describe Jekyll::SecretPosts::Hooks do
       expect(doc_without_head.output).to include('<meta name="referrer" content="no-referrer">')
     end
 
+    it "injects into a head tag that carries attributes" do
+      doc_with_attrs = OpenStruct.new(
+        collection: OpenStruct.new(label: "secret"),
+        site: OpenStruct.new(config: {}),
+        output: %(<!DOCTYPE html>\n<html>\n<head prefix="og: https://ogp.me/ns#">\n</head>\n<body></body>\n</html>)
+      )
+      described_class.inject_secret_meta(doc_with_attrs)
+
+      expect(doc_with_attrs.output).to start_with("<!DOCTYPE html>")
+      expect(doc_with_attrs.output).to include(
+        %(<head prefix="og: https://ogp.me/ns#">\n  <meta name="robots" content="noindex, nofollow">)
+      )
+    end
+
+    it "keeps the doctype first so the page does not fall into quirks mode" do
+      doc_with_attrs = OpenStruct.new(
+        collection: OpenStruct.new(label: "secret"),
+        site: OpenStruct.new(config: {}),
+        output: %(<!DOCTYPE html>\n<html>\n<head lang="en">\n</head>\n<body></body>\n</html>)
+      )
+      described_class.inject_secret_meta(doc_with_attrs)
+
+      expect(doc_with_attrs.output.lines.first.strip).to eq("<!DOCTYPE html>")
+    end
+
+    it "does not mistake a header element for the head tag" do
+      doc_with_header = OpenStruct.new(
+        collection: OpenStruct.new(label: "secret"),
+        site: OpenStruct.new(config: {}),
+        output: "<html><body><header>Title</header></body></html>"
+      )
+      described_class.inject_secret_meta(doc_with_header)
+
+      expect(doc_with_header.output).to start_with('<meta name="robots" content="noindex, nofollow">')
+      expect(doc_with_header.output).to include("<header>Title</header>")
+    end
+
     it "leaves documents outside the secret collection untouched" do
       public_doc = OpenStruct.new(
         collection: OpenStruct.new(label: "posts"),

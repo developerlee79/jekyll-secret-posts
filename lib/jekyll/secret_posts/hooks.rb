@@ -14,6 +14,10 @@ module Jekyll
 
       SECRET_META = [NOINDEX_META, NO_REFERRER_META].freeze
 
+      # Themes routinely open the head with attributes (`<head prefix="og: ...">`),
+      # which a literal "<head>" match misses. The lookahead spares <header>.
+      HEAD_TAG = /<head(?=[\s>])[^>]*>/i.freeze
+
       SECRET_INDEX_FLAG = "secret_index"
 
       def self.register
@@ -77,10 +81,12 @@ module Jekyll
 
       def self.with_secret_meta(output)
         return output unless output
-        return "#{SECRET_META.join("\n")}\n#{output}" unless output.include?("<head>")
+        # Last resort: prepending puts the tags ahead of the doctype, which means
+        # quirks mode and a robots meta outside <head>, where crawlers ignore it.
+        return "#{SECRET_META.join("\n")}\n#{output}" unless output.match?(HEAD_TAG)
 
         meta = SECRET_META.map { |tag| "  #{tag}" }.join("\n")
-        output.sub("<head>", "<head>\n#{meta}")
+        output.sub(HEAD_TAG) { |head_tag| "#{head_tag}\n#{meta}" }
       end
     end
   end
