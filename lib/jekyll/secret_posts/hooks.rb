@@ -15,8 +15,10 @@ module Jekyll
       SECRET_META = [NOINDEX_META, NO_REFERRER_META].freeze
 
       # Themes routinely open the head with attributes (`<head prefix="og: ...">`),
-      # which a literal "<head>" match misses. The lookahead spares <header>.
-      HEAD_TAG = /<head(?=[\s>])[^>]*>/i.freeze
+      # which a literal "<head>" match misses. The lookahead spares <header>, and
+      # quoted runs are matched whole so a ">" inside an attribute value does not
+      # end the tag early.
+      HEAD_TAG = /<head(?=[\s>])(?:[^>"']|"[^"]*"|'[^']*')*>/i.freeze
 
       SECRET_INDEX_FLAG = "secret_index"
 

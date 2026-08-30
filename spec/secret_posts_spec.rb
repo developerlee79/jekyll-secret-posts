@@ -227,6 +227,11 @@ RSpec.describe Jekyll::SecretPosts::Config do
       expect(cfg.redirect_url).to eq("/")
     end
 
+    it "rejects a backslash-escaped protocol-relative target and falls back to /" do
+      cfg = described_class.new("secret_posts" => { "redirect_url" => "/\\evil.example.com" })
+      expect(cfg.redirect_url).to eq("/")
+    end
+
     it "rejects a relative target that is not rooted and falls back to /" do
       cfg = described_class.new("secret_posts" => { "redirect_url" => "evil.example.com" })
       expect(cfg.redirect_url).to eq("/")
@@ -673,6 +678,20 @@ RSpec.describe Jekyll::SecretPosts::Hooks do
       described_class.inject_secret_meta(doc_with_attrs)
 
       expect(doc_with_attrs.output.lines.first.strip).to eq("<!DOCTYPE html>")
+    end
+
+    it "matches the whole head tag when an attribute value contains a > character" do
+      doc = OpenStruct.new(
+        collection: OpenStruct.new(label: "secret"),
+        site: OpenStruct.new(config: {}),
+        output: %(<!DOCTYPE html>\n<html>\n<head data-x="a>b" class="foo">\n</head>\n<body></body>\n</html>)
+      )
+      described_class.inject_secret_meta(doc)
+
+      expect(doc.output).to include(
+        %(<head data-x="a>b" class="foo">\n  <meta name="robots" content="noindex, nofollow">)
+      )
+      expect(doc.output).not_to include(%(data-x="a>\n))
     end
 
     it "does not mistake a header element for the head tag" do

@@ -16,7 +16,9 @@ module Jekyll
 
       # Everything else ("javascript:", "data:", "//host") is rejected.
       SAFE_ABSOLUTE_URL = %r{\Ahttps?://}i.freeze
-      ROOT_RELATIVE_URL = %r{\A/(?!/)}.freeze
+      # A backslash after the leading slash is excluded too: browsers fold "\"
+      # into "/" for special schemes, so "/\host" navigates like "//host".
+      ROOT_RELATIVE_URL = %r{\A/(?![/\\])}.freeze
 
       def initialize(site_config)
         @site_config = site_config
