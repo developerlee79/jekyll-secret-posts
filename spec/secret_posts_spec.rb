@@ -351,6 +351,24 @@ RSpec.describe Jekyll::SecretPosts::UrlTokenizer do
     expect(described_class.new(config).token_for("secret", "foo.md")).not_to eq(with_salt)
   end
 
+  # Captured from released behaviour. If one of these fails, restore the
+  # derivation -- do not update the expectation.
+  describe "URL stability" do
+    it "pins the token for a salted build" do
+      expect(tokenizer.token_for("secret", "foo.md")).to eq("580388b7926545a89236abf36550f955")
+    end
+
+    it "pins the token for an unsalted build" do
+      ENV["JEKYLL_SECRET_SALT"] = nil
+      expect(described_class.new(config).token_for("secret", "foo.md"))
+        .to eq("bd7edab84100fcd9ac2e96c1d79b7ff6")
+    end
+
+    it "pins the full URL including prefix and trailing slash" do
+      expect(tokenizer.url_for("secret", "foo.md")).to eq("/s/580388b7926545a89236abf36550f955/")
+    end
+  end
+
   describe "#url_for" do
     it "wraps the token in the configured url_prefix with a trailing slash" do
       expect(tokenizer.url_for("secret", "foo.md")).to eq("/s/#{tokenizer.token_for('secret', 'foo.md')}/")
