@@ -254,6 +254,12 @@ RSpec.describe Jekyll::SecretPosts::UrlTokenizer do
     expect(tokenizer.token_for(nil, "foo.md")).to eq(token)
   end
 
+  it "produces different tokens for different salts" do
+    with_salt = tokenizer.token_for("secret", "foo.md")
+    ENV["JEKYLL_SECRET_SALT"] = "other-salt"
+    expect(described_class.new(config).token_for("secret", "foo.md")).not_to eq(with_salt)
+  end
+
   describe "#url_for" do
     it "wraps the token in the configured url_prefix with a trailing slash" do
       expect(tokenizer.url_for("secret", "foo.md")).to eq("/s/#{tokenizer.token_for('secret', 'foo.md')}/")
@@ -340,7 +346,7 @@ RSpec.describe Jekyll::SecretPosts::Generator do
     end
 
     it "logs to Jekyll.logger.info when no secret collection exists" do
-      logger = double("logger", info: nil)
+      logger = double("logger", info: nil, warn: nil)
       allow(Jekyll).to receive(:logger).and_return(logger)
 
       generator = described_class.new
@@ -374,7 +380,7 @@ RSpec.describe Jekyll::SecretPosts::Generator do
       allow(site_with_collection).to receive(:source).and_return("/tmp/source")
       allow(site_with_collection).to receive(:in_theme_dir).and_return("/tmp/source")
 
-      logger = double("logger", info: nil)
+      logger = double("logger", info: nil, warn: nil)
       allow(Jekyll).to receive(:logger).and_return(logger)
 
       original_salt = ENV.fetch("JEKYLL_SECRET_SALT", nil)
@@ -433,7 +439,7 @@ RSpec.describe Jekyll::SecretPosts::Hooks do
     end
   end
 
-  describe ".inject_noindex" do
+  describe ".inject_secret_meta" do
     let(:doc) do
       OpenStruct.new(
         collection: OpenStruct.new(label: "secret"),
@@ -443,9 +449,14 @@ RSpec.describe Jekyll::SecretPosts::Hooks do
     end
 
     it "injects noindex meta after head" do
-      described_class.inject_noindex(doc)
+      described_class.inject_secret_meta(doc)
       expect(doc.output).to include('<meta name="robots" content="noindex, nofollow">')
       expect(doc.output).to include("<head>\n  <meta name=\"robots\"")
+    end
+
+    it "injects a no-referrer policy so the secret URL is not leaked in the Referer header" do
+      described_class.inject_secret_meta(doc)
+      expect(doc.output).to include('<meta name="referrer" content="no-referrer">')
     end
 
     it "falls back to prepend when no head tag" do
@@ -454,8 +465,37 @@ RSpec.describe Jekyll::SecretPosts::Hooks do
         site: OpenStruct.new(config: {}),
         output: "<html><body>Hi</body></html>"
       )
-      described_class.inject_noindex(doc_without_head)
+      described_class.inject_secret_meta(doc_without_head)
       expect(doc_without_head.output).to start_with('<meta name="robots" content="noindex, nofollow">')
+      expect(doc_without_head.output).to include('<meta name="referrer" content="no-referrer">')
+    end
+
+    it "leaves documents outside the secret collection untouched" do
+      public_doc = OpenStruct.new(
+        collection: OpenStruct.new(label: "posts"),
+        site: OpenStruct.new(config: {}),
+        output: "<html><head></head><body>Hi</body></html>"
+      )
+      described_class.inject_secret_meta(public_doc)
+      expect(public_doc.output).not_to include("robots")
+    end
+  end
+
+  describe ".inject_secret_index_meta" do
+    it "injects the meta tags into the generated secret index page" do
+      page = OpenStruct.new(
+        data: { "secret_index" => true },
+        output: "<html><head></head><body>Redirecting...</body></html>"
+      )
+      described_class.inject_secret_index_meta(page)
+      expect(page.output).to include('<meta name="robots" content="noindex, nofollow">')
+      expect(page.output).to include('<meta name="referrer" content="no-referrer">')
+    end
+
+    it "leaves unrelated pages untouched" do
+      page = OpenStruct.new(data: {}, output: "<html><head></head><body>Hi</body></html>")
+      described_class.inject_secret_index_meta(page)
+      expect(page.output).not_to include("robots")
     end
   end
 end
@@ -518,6 +558,36 @@ RSpec.describe "Secret posts integration" do
       expect(content).to include("0;url=/")
       expect(content).to include("Redirecting...")
       expect(content).to include("Go to homepage")
+    end
+  end
+
+  it "marks the secret index page and every secret document as noindex and no-referrer" do
+    Dir.mktmpdir do |tmp|
+      source = tmp
+      dest = File.join(tmp, "_site")
+      FileUtils.mkdir_p(File.join(source, "_secret"))
+      File.write(
+        File.join(source, "_secret", "test-post.md"),
+        "---\ntitle: Secret\n---\nBody\n"
+      )
+      File.write(
+        File.join(source, "_config.yml"),
+        "plugins:\n  - jekyll-secret-posts\nsecret_posts:\n  index_layout: null\n"
+      )
+      config = Jekyll.configuration(
+        "source" => source,
+        "destination" => dest,
+        "plugins" => ["jekyll-secret-posts"]
+      )
+      Jekyll::Site.new(config).process
+
+      html_files = Dir.glob(File.join(dest, "s", "**", "*.html"))
+      expect(html_files.size).to eq(2)
+      html_files.each do |path|
+        content = File.read(path)
+        expect(content).to include('<meta name="robots" content="noindex, nofollow">')
+        expect(content).to include('<meta name="referrer" content="no-referrer">')
+      end
     end
   end
 

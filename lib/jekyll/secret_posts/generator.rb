@@ -2,6 +2,7 @@
 
 require "cgi"
 require "jekyll/secret_posts/config"
+require "jekyll/secret_posts/hooks"
 require "jekyll/secret_posts/url_tokenizer"
 
 module Jekyll
@@ -23,6 +24,7 @@ module Jekyll
         page = Jekyll::PageWithoutAFile.new(site, site.source, prefix_dir, "index.html")
         page.data["permalink"] = config.url_prefix
         page.data["sitemap"] = false
+        page.data[Hooks::SECRET_INDEX_FLAG] = true
         assign_redirect_content(page, config)
         site.pages << page
       end

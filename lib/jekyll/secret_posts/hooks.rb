@@ -8,6 +8,14 @@ module Jekyll
     module Hooks
       NOINDEX_META = '<meta name="robots" content="noindex, nofollow">'
 
+      # Without this the secret URL travels in the Referer header of every outbound
+      # link, image, and script, handing it to parties never given the link.
+      NO_REFERRER_META = '<meta name="referrer" content="no-referrer">'
+
+      SECRET_META = [NOINDEX_META, NO_REFERRER_META].freeze
+
+      SECRET_INDEX_FLAG = "secret_index"
+
       def self.register
         Jekyll::Hooks.register(:site, :after_init) do |site|
           register_secret_collection(site)
@@ -16,7 +24,10 @@ module Jekyll
           apply_secret_permalink(doc)
         end
         Jekyll::Hooks.register(:documents, :post_render) do |doc|
-          inject_noindex(doc)
+          inject_secret_meta(doc)
+        end
+        Jekyll::Hooks.register(:pages, :post_render) do |page|
+          inject_secret_index_meta(page)
         end
       end
 
@@ -52,16 +63,24 @@ module Jekyll
         config.collection_name == doc.collection.label ? config : nil
       end
 
-      def self.inject_noindex(doc)
+      def self.inject_secret_meta(doc)
         return unless secret_config_for(doc)
-        return unless doc.output
 
-        new_output = if doc.output.include?("<head>")
-                       doc.output.sub("<head>", "<head>\n  #{NOINDEX_META}")
-                     else
-                       "#{NOINDEX_META}\n#{doc.output}"
-                     end
-        doc.output = new_output
+        doc.output = with_secret_meta(doc.output)
+      end
+
+      def self.inject_secret_index_meta(page)
+        return unless page.data[SECRET_INDEX_FLAG]
+
+        page.output = with_secret_meta(page.output)
+      end
+
+      def self.with_secret_meta(output)
+        return output unless output
+        return "#{SECRET_META.join("\n")}\n#{output}" unless output.include?("<head>")
+
+        meta = SECRET_META.map { |tag| "  #{tag}" }.join("\n")
+        output.sub("<head>", "<head>\n#{meta}")
       end
     end
   end
