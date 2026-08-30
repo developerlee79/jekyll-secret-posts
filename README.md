@@ -153,6 +153,8 @@ The plugin does the following on every secret page:
 
 Only files with YAML front matter become secret posts. Jekyll reads a file without front matter as a static file, which never goes through the hashing, so such files would be published unhashed at `/<collection_name>/<path>`. The plugin drops them from the build instead and names them in a build warning — so **attachments do not belong in the secret directory**. Put images and downloads somewhere else and link to them; note that they are then public to anyone who guesses their URL.
 
+If your site already declares a collection under the same name, the plugin takes over that collection's URLs and removes it from the sitemap, and warns while doing so. Set `collection_name` to something else to keep the existing collection public.
+
 It cannot protect against the following, which are up to your site:
 
 * **Templates that iterate over all documents.** Search-index generators and "all content" listings usually loop over `site.documents` or `site.collections`, which include secret posts. A template like `{% for d in site.documents %}` will publish every secret URL and title into `search.json`. Exclude the secret collection in any such template.

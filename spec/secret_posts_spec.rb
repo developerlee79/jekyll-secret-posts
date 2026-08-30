@@ -863,6 +863,40 @@ RSpec.describe "Secret posts integration" do
     end
   end
 
+  it "warns instead of silently taking over a collection the site already declared" do
+    Dir.mktmpdir do |tmp|
+      source = tmp
+      dest = File.join(tmp, "_site")
+      FileUtils.mkdir_p(File.join(source, "_secret"))
+      File.write(File.join(source, "_secret", "mine.md"), "---\ntitle: Mine\n---\nBody\n")
+      File.write(
+        File.join(source, "_config.yml"),
+        <<~YAML
+          plugins:
+            - jekyll-secret-posts
+          collections:
+            secret:
+              output: true
+              permalink: "/:collection/:path/"
+          secret_posts:
+            index_layout: null
+        YAML
+      )
+      config = Jekyll.configuration(
+        "source" => source,
+        "destination" => dest,
+        "plugins" => ["jekyll-secret-posts"]
+      )
+
+      logged = []
+      allow(Jekyll.logger).to receive(:warn) { |*args| logged << args.join(" ") }
+
+      Jekyll::Site.new(config).process
+
+      expect(logged.grep(/already declared/).size).to eq(1)
+    end
+  end
+
   it "keeps an excluded non-collection directory out of the build" do
     Dir.mktmpdir do |tmp|
       source = tmp

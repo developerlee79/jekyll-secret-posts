@@ -52,7 +52,10 @@ module Jekyll
         config = Config.new(site.config)
         warn_about_ignored_source_dir(config)
         collections = site.config["collections"] ||= {}
-        return if collections.key?(config.collection_name)
+        if collections.key?(config.collection_name)
+          warn_about_claimed_collection(config)
+          return
+        end
 
         collections[config.collection_name] = { "output" => true }
         # Only ever the derived "_<collection_name>": an underscored directory is
@@ -85,6 +88,12 @@ module Jekyll
                            "matter, which would otherwise be published unhashed: " \
                            "#{skipped.map(&:relative_path).join(', ')}. Add front matter to publish a file " \
                            "as a secret post, or move attachments outside the secret directory."
+      end
+
+      def self.warn_about_claimed_collection(config)
+        Jekyll.logger.warn "Secret posts: collection #{config.collection_name.inspect} is already declared " \
+                           "in _config.yml. Its documents will be served at hashed URLs and dropped from the " \
+                           "sitemap. Set secret_posts.collection_name to keep that collection public."
       end
 
       def self.warn_about_ignored_source_dir(config)
